@@ -33,6 +33,7 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
   late bool _typing = widget.startTyping;
   List<Expense>? _results;
   String _heard = '';
+  bool _saving = false;
 
   @override
   void initState() {
@@ -59,8 +60,17 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
 
   Future<void> _save() async {
     final list = _results ?? const [];
-    if (list.isEmpty) return;
-    await ref.read(expensesProvider.notifier).addAll(list);
+    if (list.isEmpty || _saving) return;
+    setState(() => _saving = true);
+    try {
+      await ref.read(expensesProvider.notifier).addAll(list);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save: $e')));
+      }
+      return;
+    }
     HapticFeedback.heavyImpact();
     if (!mounted) return;
     final total = list.fold<double>(0, (s, e) => s + e.amount);
@@ -244,8 +254,10 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
             Expanded(
               flex: 2,
               child: FilledButton.icon(
-                onPressed: list.isEmpty ? null : _save,
-                icon: const Icon(Icons.check_rounded),
+                onPressed: list.isEmpty || _saving ? null : _save,
+                icon: _saving
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.check_rounded),
                 label: Text(list.length > 1 ? 'Save all' : 'Save'),
               ),
             ),

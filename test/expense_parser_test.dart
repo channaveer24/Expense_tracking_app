@@ -64,4 +64,12 @@ void main() {
     expect(p('hello there'), isEmpty);
     expect(p(''), isEmpty);
   });
+
+  test('formats Google / Samsung speech typically returns', () {
+    expect(p('I spent ₹40 on tea and ₹300 on a book'),
+        ['40|Tea|Misc|UPI|Want', '300|Book|Investment|UPI|Need']);
+    expect(p('₹40 tea ₹210 petrol'), ['40|Tea|Misc|UPI|Want', '210|Petrol|Bike|UPI|Need']);
+    expect(p('Rs. 150 for lunch'), ['150|Lunch|Misc|UPI|Want']);
+    expect(p('Spent 250 rupees on groceries.'), ['250|Groceries|Housing|UPI|Need']);
+  });
 }

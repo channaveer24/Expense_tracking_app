@@ -16,7 +16,15 @@ class ExpensesNotifier extends AsyncNotifier<List<Expense>> {
   @override
   Future<List<Expense>> build() => _db.all();
 
-  Future<void> refresh() async => state = AsyncData(await _db.all());
+  /// Reloads from SQLite. A failed reload keeps the current list on screen
+  /// instead of throwing into the void.
+  Future<void> refresh() async {
+    try {
+      state = AsyncData(await _db.all());
+    } catch (e, st) {
+      if (!state.hasValue) state = AsyncError(e, st);
+    }
+  }
 
   Future<void> add(Expense e) async {
     await _db.insert(e);

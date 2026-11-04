@@ -39,6 +39,7 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
   String _heard = '';
   Timer? _closeTimer;
   int _countdown = 4;
+  String? _saveError;
 
   @override
   void initState() {
@@ -56,6 +57,7 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
   }
 
   Future<void> _onFinal(String text) async {
+    if (_saveError != null) setState(() => _saveError = null);
     final parsed = ExpenseParser().parse(text);
     _heard = text;
     if (parsed.isEmpty) {
@@ -64,9 +66,15 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
       return;
     }
     final saved = <Expense>[];
-    for (final e in parsed) {
-      final id = await AppDatabase.instance.insert(e);
-      saved.add(e.copyWith(id: id));
+    try {
+      for (final e in parsed) {
+        final id = await AppDatabase.instance.insert(e);
+        saved.add(e.copyWith(id: id));
+      }
+    } catch (e) {
+      HapticFeedback.heavyImpact();
+      if (mounted) setState(() => _saveError = '$e');
+      return;
     }
     // Success pattern: two short pulses.
     HapticFeedback.mediumImpact();
@@ -97,6 +105,7 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
     _closeTimer?.cancel();
     setState(() {
       _saved = null;
+      _saveError = null;
       _countdown = 4;
     });
     _speech.start();
@@ -132,7 +141,9 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
                 ),
                 child: AnimatedSize(
                   duration: const Duration(milliseconds: 220),
-                  child: _saved == null ? _listening(t, cs) : _result(t, cs),
+                  child: _saveError != null
+                      ? _errorView(t, cs)
+                      : (_saved == null ? _listening(t, cs) : _result(t, cs)),
                 ),
               ),
             ),
@@ -141,6 +152,20 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
       ),
     );
   }
+
+  Widget _errorView(TextTheme t, ColorScheme cs) => Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.error_outline_rounded, color: cs.error, size: 40),
+        const SizedBox(height: 8),
+        Text('Could not save', style: t.titleLarge),
+        const SizedBox(height: 4),
+        Text(_saveError!, textAlign: TextAlign.center, style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+        const SizedBox(height: 16),
+        Row(children: [
+          Expanded(child: OutlinedButton(onPressed: _close, child: const Text('Close'))),
+          const SizedBox(width: 12),
+          Expanded(child: FilledButton(onPressed: () => _onFinal(_heard), child: const Text('Retry save'))),
+        ]),
+      ]);
 
   Widget _listening(TextTheme t, ColorScheme cs) => ListenableBuilder(
         listenable: _speech,
