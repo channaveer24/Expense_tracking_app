@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/constants/categories.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/common.dart';
@@ -9,6 +10,7 @@ import '../../data/models/expense.dart';
 import '../../data/repositories/expense_providers.dart';
 import '../expenses/expense_form_sheet.dart';
 import 'parser/expense_parser.dart';
+import 'parser/interpretations.dart';
 import 'speech_controller.dart';
 
 Future<void> showVoiceCapture(BuildContext context, {bool typing = false}) => showModalBottomSheet(
@@ -33,12 +35,14 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
   late bool _typing = widget.startTyping;
   List<Expense>? _results;
   String _heard = '';
+  List<Interpretation> _options = const [];
+  int _picked = 0;
   bool _saving = false;
 
   @override
   void initState() {
     super.initState();
-    _speech.onFinal = _handleText;
+    _speech.onFinal = _handleTranscripts;
     if (!_typing) _speech.start();
   }
 
@@ -49,12 +53,25 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
     super.dispose();
   }
 
-  void _handleText(String text) {
-    final parsed = _parser.parse(text);
+  void _handleText(String text) => _handleTranscripts([text]);
+
+  void _handleTranscripts(List<String> transcripts) {
+    final options = interpret(_parser, transcripts);
     HapticFeedback.mediumImpact();
     setState(() {
-      _heard = text;
-      _results = parsed;
+      _options = options;
+      _picked = 0;
+      _heard = options.isEmpty ? transcripts.first : options.first.transcript;
+      _results = options.isEmpty ? [] : [...options.first.expenses];
+    });
+  }
+
+  void _pick(int i) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _picked = i;
+      _heard = _options[i].transcript;
+      _results = [..._options[i].expenses];
     });
   }
 
@@ -83,6 +100,7 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
   void _retry() {
     setState(() {
       _results = null;
+      _options = const [];
       _heard = '';
       _typing = false;
     });
@@ -195,6 +213,10 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
               style: t.titleLarge),
           const SizedBox(height: 6),
           Text('“$_heard”', style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant, fontStyle: FontStyle.italic)),
+          if (_options.length > 1) ...[
+            const SizedBox(height: 12),
+            AmountChooser(options: _options, picked: _picked, onPick: _pick),
+          ],
         ]),
       ),
       if (list.isEmpty)
@@ -265,5 +287,48 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
         ]),
       ),
     ]);
+  }
+}
+
+/// Shown when Android's alternative transcripts disagree on the amounts,
+/// e.g. "510" vs "5000". One tap picks the right reading.
+class AmountChooser extends StatelessWidget {
+  const AmountChooser({super.key, required this.options, required this.picked, required this.onPick});
+  final List<Interpretation> options;
+  final int picked;
+  final ValueChanged<int> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: kWantColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kWantColor.withValues(alpha: 0.4)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.hearing_rounded, size: 18, color: kWantColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text('Not sure about the amount. Tap what you said:',
+                style: t.labelLarge?.copyWith(color: cs.onSurface)),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          for (var i = 0; i < options.length; i++)
+            ChoiceChip(
+              label: Text(options[i].amounts.map(inr).join(' + '),
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontFeatures: tabular)),
+              selected: i == picked,
+              onSelected: (_) => onPick(i),
+            ),
+        ]),
+      ]),
+    );
   }
 }

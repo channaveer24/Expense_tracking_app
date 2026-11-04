@@ -17,7 +17,12 @@ class SpeechController extends ChangeNotifier {
   String? error;
   double level = 0; // 0..1 microphone level for the pulse animation
   String? _localeId;
-  void Function(String finalText)? onFinal;
+  /// Best transcript first, then Android's alternatives (up to 10).
+  List<String> alternatives = const [];
+
+  /// Called once per utterance with every transcript Android offered,
+  /// best guess first.
+  void Function(List<String> transcripts)? onFinal;
   bool _finalDelivered = false;
 
   Future<bool> _init() async {
@@ -29,9 +34,11 @@ class SpeechController extends ChangeNotifier {
     if (ok && _localeId == null) {
       try {
         final locales = await _stt.locales();
-        _localeId = locales.any((l) => l.localeId == 'en_IN')
-            ? 'en_IN'
-            : (await _stt.systemLocale())?.localeId;
+        // Indian English hears "rupees", "five ten", Indian names of items
+        // far better than en_US. Engines spell it en_IN, en-IN or en_in.
+        String norm(String id) => id.replaceAll('-', '_').toLowerCase();
+        final indian = locales.where((l) => norm(l.localeId) == 'en_in').firstOrNull;
+        _localeId = indian?.localeId ?? (await _stt.systemLocale())?.localeId;
       } catch (_) {}
     }
     return ok;
@@ -39,6 +46,7 @@ class SpeechController extends ChangeNotifier {
 
   Future<void> start() async {
     transcript = '';
+    alternatives = const [];
     error = null;
     _finalDelivered = false;
     status = VoiceStatus.initialising;
@@ -62,6 +70,12 @@ class SpeechController extends ChangeNotifier {
     await _stt.listen(
       onResult: (r) {
         transcript = r.recognizedWords;
+        if (r.finalResult) {
+          alternatives = [
+            for (final a in r.alternates)
+              if (a.recognizedWords.trim().isNotEmpty) a.recognizedWords,
+          ];
+        }
         notifyListeners();
         if (r.finalResult) _deliver();
       },
@@ -101,7 +115,8 @@ class SpeechController extends ChangeNotifier {
     status = VoiceStatus.done;
     level = 0;
     notifyListeners();
-    onFinal?.call(transcript);
+    final all = <String>[transcript, ...alternatives.where((a) => a != transcript)];
+    onFinal?.call(all);
   }
 
   void _onStatus(String s) {

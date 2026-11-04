@@ -186,7 +186,24 @@ class ExpenseParser {
     t = t.replaceAll(RegExp(r'\b(rs\.?|rupees?|inr|bucks|rupaye|rupay)(?=\s|$|[,.;!?])'), 'rs');
     t = t.replaceAll(RegExp(r'\brs\s*\.'), 'rs ');
     t = _wordsToNumbers(t);
+    t = _joinSplitNumbers(t);
     return t.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  /// Speech engines often split one spoken amount into pieces:
+  ///   "5:10" (heard as a time)   -> 510
+  ///   "5 1 0" (digit by digit)   -> 510
+  ///   "5 10" / "12 50" ("five ten", "twelve fifty") -> 510 / 1250
+  static String _joinSplitNumbers(String t) {
+    t = t.replaceAllMapped(RegExp(r'\b(\d{1,2}):(\d{2})\b'), (m) => '${m[1]}${m[2]}');
+    t = t.replaceAllMapped(RegExp(r'\b\d(?: \d\b)+'), (m) => m[0]!.replaceAll(' ', ''));
+    String prev;
+    do {
+      prev = t;
+      t = t.replaceAllMapped(RegExp(r'(?<![\d.])\b([1-9]\d?) ([1-9]\d)\b(?![.\d])'),
+          (m) => '${int.parse(m[1]!) * 100 + int.parse(m[2]!)}');
+    } while (t != prev);
+    return t;
   }
 
   /// "two hundred and fifty rupees" -> "250 rupees".
@@ -204,10 +221,24 @@ class ExpenseParser {
       if (_scales.containsKey(w)) out.removeLast(); // "a hundred" -> 100
       var total = 0, current = 0, j = i;
       var consumed = false;
+      var digitByDigit = false;
       while (j < tokens.length) {
         final x = tokens[j];
         if (_units.containsKey(x)) {
-          current += _units[x]!;
+          final v = _units[x]!;
+          if (!consumed || current == 0 || current >= 100) {
+            current += v; // "five hundred ten", first word of a number
+          } else if (v < 10 && (digitByDigit || current < 10)) {
+            current = current * 10 + v; // "five one zero" -> 510
+            digitByDigit = true;
+          } else if (v < 10 && current >= 20 && current % 10 == 0) {
+            current += v; // "twenty five" -> 25
+          } else {
+            // Indian-style pairs: "five ten" -> 510, "twelve fifty" -> 1250,
+            // "one twenty five" -> 125
+            total += current * 100;
+            current = v;
+          }
         } else if (x == 'hundred') {
           current = (current == 0 ? 1 : current) * 100;
         } else if (_scales.containsKey(x)) {

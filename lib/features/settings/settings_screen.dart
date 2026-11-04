@@ -169,8 +169,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _Item(
               icon: Icons.offline_bolt_rounded,
               color: const Color(0xFFF5A524),
-              title: 'Enable offline speech',
-              subtitle: 'Google app > Settings > Voice > Offline speech recognition > English (India)',
+              title: 'Improve voice accuracy',
+              subtitle: 'Set voice input to Google and download English (India) for offline use',
               onTap: () async {
                 try {
                   await _native.invokeMethod('openVoiceSettings');

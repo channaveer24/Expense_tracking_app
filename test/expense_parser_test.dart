@@ -1,5 +1,6 @@
 import 'package:expense_tracker/data/models/expense.dart';
 import 'package:expense_tracker/features/voice/parser/expense_parser.dart';
+import 'package:expense_tracker/features/voice/parser/interpretations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -71,5 +72,35 @@ void main() {
     expect(p('₹40 tea ₹210 petrol'), ['40|Tea|Misc|UPI|Want', '210|Petrol|Bike|UPI|Need']);
     expect(p('Rs. 150 for lunch'), ['150|Lunch|Misc|UPI|Want']);
     expect(p('Spent 250 rupees on groceries.'), ['250|Groceries|Housing|UPI|Need']);
+  });
+
+  test('amounts the speech engine splits or spells out', () {
+    expect(p('510 rs on lunch'), ['510|Lunch|Misc|UPI|Want']);
+    expect(p('5 10 rs on lunch'), ['510|Lunch|Misc|UPI|Want']);
+    expect(p('5:10 rupees lunch'), ['510|Lunch|Misc|UPI|Want']);
+    expect(p('5 1 0 rupees for lunch'), ['510|Lunch|Misc|UPI|Want']);
+    expect(p('five ten rupees on lunch'), ['510|Lunch|Misc|UPI|Want']);
+    expect(p('five hundred ten rupees on lunch'), ['510|Lunch|Misc|UPI|Want']);
+    expect(p('five hundred and ten rupees lunch'), ['510|Lunch|Misc|UPI|Want']);
+    expect(p('twelve fifty rupees for shoes'), ['1250|Shoes|Personal|UPI|Need']);
+    expect(p('one twenty five rs tea'), ['125|Tea|Misc|UPI|Want']);
+    expect(p('twenty five rupees tea'), ['25|Tea|Misc|UPI|Want']);
+    expect(p('two thousand five hundred rupees rent'), ['2500|Rent|Housing|UPI|Need']);
+    expect(p('bought 2 books for 300 rs'), ['300|Books|Investment|UPI|Need']);
+  });
+
+  test('alternative transcripts that disagree on amounts become choices', () {
+    final options = interpret(parser, [
+      '510 rs on lunch',
+      '5000 rs on lunch',
+      '510 rupees on lunch', // same amount as the first -> merged
+      'lunch', // no amount -> ignored
+      '510 rs lunch and 20 tea', // different item count -> ignored
+    ]);
+    expect(options.map((o) => o.amounts).toList(), [
+      [510.0],
+      [5000.0],
+    ]);
+    expect(interpret(parser, ['40 rs tea']).length, 1);
   });
 }
