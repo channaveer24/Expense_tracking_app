@@ -70,11 +70,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _addTile() async {
+    String? r;
     try {
-      final r = await _native.invokeMethod<String>('requestAddTile');
-      if (r == 'unsupported') _showTileHelp();
+      r = await _native.invokeMethod<String>('requestAddTile');
     } catch (_) {
-      _showTileHelp();
+      r = 'error';
+    }
+    if (!mounted) return;
+    switch (r) {
+      case 'added':
+        _toast('"Log Expense" tile added. Swipe down from the top to use it.');
+      case 'exists':
+        _toast('The "Log Expense" tile is already in your Quick Settings. Swipe down twice to find it.');
+      default:
+        // Declined, unsupported (Android 12 and older) or blocked by the phone maker.
+        _showTileHelp();
     }
   }
 
@@ -82,10 +92,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         context: context,
         builder: (c) => AlertDialog(
           title: const Text('Add the lock-screen tile'),
-          content: const Text('1. Swipe down twice from the top of the screen.\n'
-              '2. Tap the pencil / Edit icon.\n'
-              '3. Drag the "Log Expense" tile into your active tiles.\n\n'
-              'Now, even when the phone is locked, swipe down and tap "Log Expense" to speak.'),
+          content: const SingleChildScrollView(
+            child: Text('1. Unlock the phone and swipe down twice from the top so the full Quick Settings panel opens.\n'
+                '2. Tap the pencil / Edit icon (Samsung: the ⋮ menu → Edit buttons; Xiaomi: Edit / Sort).\n'
+                '3. Scroll the list of available tiles to the bottom and find "Log Expense" (mic icon).\n'
+                '4. Long-press it and drag it up into the active tiles, then tap Done / back.\n\n'
+                'Not in the list? Restart the phone once after installing, then check again.\n\n'
+                'Then, even when locked: swipe down → tap "Log Expense" → speak.'),
+          ),
           actions: [FilledButton(onPressed: () => Navigator.pop(c), child: const Text('Got it'))],
         ),
       );
