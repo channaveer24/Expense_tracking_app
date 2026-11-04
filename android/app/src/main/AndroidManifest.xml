@@ -53,6 +53,21 @@
                 android:resource="@style/QuickVoiceTheme" />
         </activity>
 
+        <!-- Second launcher entry "Log Expense" that opens the voice overlay
+             directly. Lets Samsung's side-key "Open app" (or Good Lock
+             RegiStar press-and-hold) jump straight into voice logging. -->
+        <activity-alias
+            android:name=".VoiceLauncher"
+            android:targetActivity=".QuickVoiceActivity"
+            android:exported="true"
+            android:label="Log Expense"
+            android:icon="@mipmap/ic_launcher_voice">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Quick Settings tile: "Log Expense" (usable from the lock screen) -->
         <service
             android:name=".ExpenseTileService"
