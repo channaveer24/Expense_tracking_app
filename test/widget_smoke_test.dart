@@ -15,7 +15,12 @@ class FakeExpenses extends ExpensesNotifier {
   @override
   Future<void> refresh() async {}
   @override
-  Future<void> addAll(List<Expense> list) async => state = AsyncData([...list, ...state.value!]);
+  Future<List<Expense>> addAll(List<Expense> list) async {
+    var next = 1000 + state.value!.length;
+    final saved = [for (final e in list) e.copyWith(id: next++)];
+    state = AsyncData([...saved, ...state.value!]);
+    return saved;
+  }
   @override
   Future<void> remove(int id) async => state = AsyncData(state.value!.where((e) => e.id != id).toList());
 }
@@ -102,7 +107,7 @@ void main() {
     expect(find.text('Log your first expense'), findsOneWidget);
   });
 
-  testWidgets('typed sentence is parsed into three expenses and saved', (tester) async {
+  testWidgets('typed sentence is saved immediately as three expenses', (tester) async {
     await tester.pumpWidget(app(const []));
     await tester.pumpAndSettle();
 
@@ -115,14 +120,12 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.enterText(find.byType(TextField),
         'I have spent 40 rs on tea and i bought the book for 300rs and i also spent on the petrol and there i have spent 210 rs');
-    await tester.tap(find.text('Parse'));
+    await tester.tap(find.text('Save'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.text('Found 3 expenses'), findsOneWidget);
-    await tester.tap(find.text('Save all'));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
-    expect(find.textContaining('Saved 3 expenses'), findsOneWidget);
+    // Saved straight away – no extra confirmation step.
+    expect(find.textContaining('Saved 3 expenses · ₹550'), findsOneWidget);
+    expect(find.text('Undo'), findsOneWidget);
   });
 }

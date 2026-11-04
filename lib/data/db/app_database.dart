@@ -80,10 +80,9 @@ class AppDatabase {
 
   Future<int> insert(Expense e) => _run((d) => d.insert('expenses', e.toMap()..remove('id')));
 
-  Future<void> insertAll(List<Expense> list) => _run((d) => d.transaction((txn) async {
-        for (final e in list) {
-          await txn.insert('expenses', e.toMap()..remove('id'));
-        }
+  /// Inserts all rows in one transaction and returns their new ids.
+  Future<List<int>> insertAll(List<Expense> list) => _run((d) => d.transaction((txn) async {
+        return [for (final e in list) await txn.insert('expenses', e.toMap()..remove('id'))];
       }));
 
   Future<void> update(Expense e) =>

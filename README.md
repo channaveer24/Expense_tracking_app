@@ -57,7 +57,9 @@ The parser is in `lib/features/voice/parser/expense_parser.dart`. It is pure Dar
    - **Payment:** cash / card / upi / gpay / phonepe / paytm, default **UPI**. A trailing "paid everything by cash" applies to all items.
    - **Date:** "yesterday" / "day before yesterday", default today.
 
-Before anything is saved in the app, you see the parsed rows and can edit any of them. To teach it new words, add them to `categoryKeywords`.
+Speaking saves immediately, and you can then Undo or tap a row to fix it. Listening continues through pauses: Android ends each recognition session after about a second of silence, so the app restarts it and joins the pieces. It only stops after 3.5 s of silence (6 s before the first word), or when you tap the mic.
+
+Spoken amounts are normalised, so "five ten" → 510, "twelve fifty" → 1250, "five one zero" → 510, and amounts split by the engine ("5 10", "5:10") are joined back together. To teach it new words, add them to `categoryKeywords`.
 
 ## Project structure
 

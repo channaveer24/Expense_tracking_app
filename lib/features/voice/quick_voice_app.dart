@@ -9,7 +9,6 @@ import '../../core/widgets/common.dart';
 import '../../data/db/app_database.dart';
 import '../../data/models/expense.dart';
 import 'parser/expense_parser.dart';
-import 'parser/interpretations.dart';
 import 'speech_controller.dart';
 
 /// Lightweight UI launched by the "Log Expense" Quick Settings tile, shown
@@ -41,7 +40,6 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
   Timer? _closeTimer;
   int _countdown = 4;
   String? _saveError;
-  List<Interpretation> _options = const [];
   List<Expense> _pending = const [];
 
   @override
@@ -59,30 +57,20 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
     super.dispose();
   }
 
-  void _onFinal(List<String> transcripts) {
-    final options = interpret(ExpenseParser(), transcripts);
-    _heard = options.isEmpty ? transcripts.first : options.first.transcript;
-    if (options.isEmpty) {
+  void _onFinal(String text) {
+    final parsed = ExpenseParser().parse(text);
+    _heard = text;
+    if (parsed.isEmpty) {
       HapticFeedback.heavyImpact();
       setState(() => _saved = const []);
       return;
     }
-    if (options.length > 1) {
-      // The engine wasn't sure about the numbers: ask instead of saving a
-      // wrong amount.
-      HapticFeedback.heavyImpact();
-      setState(() => _options = options);
-      return;
-    }
-    _save(options.first.expenses);
+    _save(parsed);
   }
 
   Future<void> _save(List<Expense> parsed) async {
     _pending = parsed;
-    setState(() {
-      _saveError = null;
-      _options = const [];
-    });
+    setState(() => _saveError = null);
     final saved = <Expense>[];
     try {
       for (final e in parsed) {
@@ -124,7 +112,6 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
     setState(() {
       _saved = null;
       _saveError = null;
-      _options = const [];
       _countdown = 4;
     });
     _speech.start();
@@ -162,8 +149,6 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
                   duration: const Duration(milliseconds: 220),
                   child: _saveError != null
                       ? _errorView(t, cs)
-                      : _options.length > 1
-                          ? _chooseView(t, cs)
                       : (_saved == null ? _listening(t, cs) : _result(t, cs)),
                 ),
               ),
@@ -188,33 +173,6 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
         ]),
       ]);
 
-  Widget _chooseView(TextTheme t, ColorScheme cs) => Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Which amount?', style: t.titleLarge),
-          const SizedBox(height: 4),
-          Text('“$_heard”', style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant, fontStyle: FontStyle.italic)),
-          const SizedBox(height: 12),
-          for (final o in _options)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: OutlinedButton(
-                onPressed: () => _save(o.expenses),
-                style: OutlinedButton.styleFrom(alignment: Alignment.centerLeft),
-                child: Text(
-                  o.expenses.map((e) => '${inr(e.amount)} ${e.description}').join('  +  '),
-                  style: t.titleMedium?.copyWith(fontWeight: FontWeight.w700, fontFeatures: tabular),
-                ),
-              ),
-            ),
-          Row(children: [
-            Expanded(child: TextButton(onPressed: _close, child: const Text('Cancel'))),
-            Expanded(child: TextButton(onPressed: _retry, child: const Text('Say again'))),
-          ]),
-        ],
-      );
-
   Widget _listening(TextTheme t, ColorScheme cs) => ListenableBuilder(
         listenable: _speech,
         builder: (context, _) {
@@ -236,7 +194,7 @@ class _QuickVoiceScreenState extends State<QuickVoiceScreen> {
               child: Text(
                 _speech.error ??
                     (_speech.transcript.isEmpty
-                        ? (listening ? 'Listening… say "40 rupees tea and 210 petrol"' : 'Starting…')
+                        ? (listening ? 'Listening… pauses are fine' : 'Starting…')
                         : '“${_speech.transcript}”'),
                 textAlign: TextAlign.center,
                 style: _speech.error != null ? t.bodyMedium?.copyWith(color: cs.error) : t.titleMedium,

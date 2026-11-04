@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/constants/categories.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/common.dart';
@@ -10,7 +9,6 @@ import '../../data/models/expense.dart';
 import '../../data/repositories/expense_providers.dart';
 import '../expenses/expense_form_sheet.dart';
 import 'parser/expense_parser.dart';
-import 'parser/interpretations.dart';
 import 'speech_controller.dart';
 
 Future<void> showVoiceCapture(BuildContext context, {bool typing = false}) => showModalBottomSheet(
@@ -20,6 +18,9 @@ Future<void> showVoiceCapture(BuildContext context, {bool typing = false}) => sh
       builder: (_) => VoiceCaptureSheet(startTyping: typing),
     );
 
+/// Speak -> saved. Listening continues through short pauses and ends after
+/// ~3.5 s of silence; the expenses are saved straight away and shown with
+/// Undo and tap-to-edit.
 class VoiceCaptureSheet extends ConsumerStatefulWidget {
   const VoiceCaptureSheet({super.key, this.startTyping = false});
   final bool startTyping;
@@ -33,16 +34,17 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
   final _parser = ExpenseParser();
   final _text = TextEditingController();
   late bool _typing = widget.startTyping;
-  List<Expense>? _results;
+
+  /// null = still capturing; empty = nothing understood; else saved rows.
+  List<Expense>? _saved;
   String _heard = '';
-  List<Interpretation> _options = const [];
-  int _picked = 0;
   bool _saving = false;
+  String? _saveError;
 
   @override
   void initState() {
     super.initState();
-    _speech.onFinal = _handleTranscripts;
+    _speech.onFinal = _handleText;
     if (!_typing) _speech.start();
   }
 
@@ -53,54 +55,55 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
     super.dispose();
   }
 
-  void _handleText(String text) => _handleTranscripts([text]);
-
-  void _handleTranscripts(List<String> transcripts) {
-    final options = interpret(_parser, transcripts);
-    HapticFeedback.mediumImpact();
+  Future<void> _handleText(String text) async {
+    final parsed = _parser.parse(text);
     setState(() {
-      _options = options;
-      _picked = 0;
-      _heard = options.isEmpty ? transcripts.first : options.first.transcript;
-      _results = options.isEmpty ? [] : [...options.first.expenses];
+      _heard = text;
+      _saveError = null;
     });
-  }
-
-  void _pick(int i) {
-    HapticFeedback.selectionClick();
-    setState(() {
-      _picked = i;
-      _heard = _options[i].transcript;
-      _results = [..._options[i].expenses];
-    });
-  }
-
-  Future<void> _save() async {
-    final list = _results ?? const [];
-    if (list.isEmpty || _saving) return;
-    setState(() => _saving = true);
-    try {
-      await ref.read(expensesProvider.notifier).addAll(list);
-    } catch (e) {
-      if (mounted) {
-        setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save: $e')));
-      }
+    if (parsed.isEmpty) {
+      HapticFeedback.heavyImpact();
+      setState(() => _saved = const []);
       return;
     }
-    HapticFeedback.heavyImpact();
-    if (!mounted) return;
-    final total = list.fold<double>(0, (s, e) => s + e.amount);
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('Saved ${list.length} expense${list.length == 1 ? '' : 's'} · ${inr(total)}'),
-    ));
+    setState(() => _saving = true);
+    try {
+      final saved = await ref.read(expensesProvider.notifier).addAll(parsed);
+      HapticFeedback.mediumImpact();
+      if (mounted) setState(() => _saved = saved);
+    } catch (e) {
+      HapticFeedback.heavyImpact();
+      if (mounted) setState(() => _saveError = '$e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
-  void _retry() {
+  Future<void> _undoAll() async {
+    final n = ref.read(expensesProvider.notifier);
+    for (final e in _saved ?? const <Expense>[]) {
+      if (e.id != null) await n.remove(e.id!);
+    }
+    HapticFeedback.lightImpact();
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Removed.')));
+  }
+
+  Future<void> _edit(int i) async {
+    final list = _saved!;
+    await showExpenseForm(context, initial: list[i]);
+    // Re-read: the row may have been edited or deleted in the form.
+    final current = ref.read(expensesProvider).value ?? const <Expense>[];
+    final fresh = current.where((e) => e.id == list[i].id).firstOrNull;
+    if (!mounted) return;
+    setState(() => fresh == null ? list.removeAt(i) : list[i] = fresh);
+  }
+
+  void _again() {
     setState(() {
-      _results = null;
-      _options = const [];
+      _saved = null;
+      _saveError = null;
       _heard = '';
       _typing = false;
     });
@@ -111,16 +114,21 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
   Widget build(BuildContext context) {
     final t = Theme.of(context).textTheme;
     final cs = Theme.of(context).colorScheme;
-
+    final Widget body;
+    if (_saveError != null) {
+      body = _errorView(t, cs);
+    } else if (_saving) {
+      body = const Padding(padding: EdgeInsets.all(48), child: Center(child: CircularProgressIndicator()));
+    } else if (_saved != null) {
+      body = _savedView(t, cs);
+    } else {
+      body = _captureView(t, cs);
+    }
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.85),
-        child: AnimatedSize(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOutCubic,
-          child: _results != null ? _resultsView(t, cs) : _captureView(t, cs),
-        ),
+        child: AnimatedSize(duration: const Duration(milliseconds: 250), curve: Curves.easeOutCubic, child: body),
       ),
     );
   }
@@ -137,7 +145,9 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
                 style: t.titleLarge),
             const SizedBox(height: 6),
             Text(
-              'e.g. "40 rs on tea and 300 for a book, 210 on petrol by cash"',
+              _typing
+                  ? 'e.g. "40 rs on tea and 300 for a book, 210 on petrol by cash"'
+                  : 'Take your time, pauses are fine. It stops after a few seconds of silence, or tap the mic when done.',
               textAlign: TextAlign.center,
               style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
             ),
@@ -181,7 +191,7 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
               Row(children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: _retry,
+                    onPressed: _again,
                     icon: const Icon(Icons.mic_none_rounded),
                     label: const Text('Speak'),
                   ),
@@ -190,8 +200,8 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: () => _text.text.trim().isEmpty ? null : _handleText(_text.text),
-                    icon: const Icon(Icons.auto_awesome_rounded),
-                    label: const Text('Parse'),
+                    icon: const Icon(Icons.check_rounded),
+                    label: const Text('Save'),
                   ),
                 ),
               ]),
@@ -202,26 +212,50 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
     );
   }
 
-  Widget _resultsView(TextTheme t, ColorScheme cs) {
-    final list = _results!;
+  Widget _errorView(TextTheme t, ColorScheme cs) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.error_outline_rounded, color: cs.error, size: 40),
+          const SizedBox(height: 8),
+          Text('Could not save', style: t.titleLarge),
+          const SizedBox(height: 4),
+          Text(_saveError!, textAlign: TextAlign.center, style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(child: OutlinedButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))),
+            const SizedBox(width: 12),
+            Expanded(child: FilledButton(onPressed: () => _handleText(_heard), child: const Text('Retry save'))),
+          ]),
+        ]),
+      );
+
+  Widget _savedView(TextTheme t, ColorScheme cs) {
+    final list = _saved!;
     final total = list.fold<double>(0, (s, e) => s + e.amount);
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(list.isEmpty ? 'No amounts found' : 'Found ${list.length} expense${list.length == 1 ? '' : 's'}',
-              style: t.titleLarge),
+          Row(children: [
+            Icon(list.isEmpty ? Icons.help_outline_rounded : Icons.check_circle_rounded,
+                color: list.isEmpty ? cs.error : AppColors.mint, size: 26),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                list.isEmpty
+                    ? 'No amount heard'
+                    : 'Saved ${list.length} expense${list.length == 1 ? '' : 's'} · ${inr(total)}',
+                style: t.titleLarge?.copyWith(fontFeatures: tabular),
+              ),
+            ),
+          ]),
           const SizedBox(height: 6),
           Text('“$_heard”', style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant, fontStyle: FontStyle.italic)),
-          if (_options.length > 1) ...[
-            const SizedBox(height: 12),
-            AmountChooser(options: _options, picked: _picked, onPick: _pick),
-          ],
         ]),
       ),
       if (list.isEmpty)
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: Text('Say the amount with the item, e.g. "50 rupees for coffee".',
               style: t.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
         )
@@ -231,24 +265,7 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
             shrinkWrap: true,
             padding: const EdgeInsets.symmetric(horizontal: 8),
             itemCount: list.length,
-            itemBuilder: (context, i) => Dismissible(
-              key: ObjectKey(list[i]),
-              direction: DismissDirection.endToStart,
-              background: Container(
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 24),
-                child: Icon(Icons.close_rounded, color: cs.error),
-              ),
-              onDismissed: (_) => setState(() => list.removeAt(i)),
-              child: ExpenseTile(
-                list[i],
-                showDate: true,
-                onTap: () async {
-                  final edited = await showExpenseForm(context, initial: list[i], persist: false);
-                  if (edited != null) setState(() => list[i] = edited);
-                },
-              ),
-            ),
+            itemBuilder: (context, i) => ExpenseTile(list[i], showDate: true, onTap: () => _edit(i)),
           ),
         ),
       Padding(
@@ -257,78 +274,30 @@ class _VoiceCaptureSheetState extends ConsumerState<VoiceCaptureSheet> {
           if (list.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: Row(children: [
-                Text('Tap to edit · swipe to remove', style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-                const Spacer(),
-                Text('Total ', style: t.bodyMedium),
-                Text(inr(total), style: t.titleMedium?.copyWith(fontWeight: FontWeight.w800, fontFeatures: tabular)),
-              ]),
+              child: Text('Wrong? Tap a row to fix it.',
+                  style: t.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
             ),
           Row(children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: _retry,
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Retry'),
+                onPressed: list.isEmpty ? _again : _undoAll,
+                icon: Icon(list.isEmpty ? Icons.mic_rounded : Icons.undo_rounded),
+                label: Text(list.isEmpty ? 'Try again' : 'Undo'),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              flex: 2,
               child: FilledButton.icon(
-                onPressed: list.isEmpty || _saving ? null : _save,
-                icon: _saving
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.check_rounded),
-                label: Text(list.length > 1 ? 'Save all' : 'Save'),
+                onPressed: list.isEmpty ? () => Navigator.pop(context) : _again,
+                icon: Icon(list.isEmpty ? Icons.close_rounded : Icons.add_rounded),
+                label: Text(list.isEmpty ? 'Close' : 'Add more'),
               ),
             ),
           ]),
+          if (list.isNotEmpty)
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Done')),
         ]),
       ),
     ]);
-  }
-}
-
-/// Shown when Android's alternative transcripts disagree on the amounts,
-/// e.g. "510" vs "5000". One tap picks the right reading.
-class AmountChooser extends StatelessWidget {
-  const AmountChooser({super.key, required this.options, required this.picked, required this.onPick});
-  final List<Interpretation> options;
-  final int picked;
-  final ValueChanged<int> onPick;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = Theme.of(context).textTheme;
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: kWantColor.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: kWantColor.withValues(alpha: 0.4)),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.hearing_rounded, size: 18, color: kWantColor),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text('Not sure about the amount. Tap what you said:',
-                style: t.labelLarge?.copyWith(color: cs.onSurface)),
-          ),
-        ]),
-        const SizedBox(height: 10),
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          for (var i = 0; i < options.length; i++)
-            ChoiceChip(
-              label: Text(options[i].amounts.map(inr).join(' + '),
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontFeatures: tabular)),
-              selected: i == picked,
-              onSelected: (_) => onPick(i),
-            ),
-        ]),
-      ]),
-    );
   }
 }

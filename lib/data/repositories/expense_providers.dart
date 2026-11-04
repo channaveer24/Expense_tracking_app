@@ -31,9 +31,11 @@ class ExpensesNotifier extends AsyncNotifier<List<Expense>> {
     await refresh();
   }
 
-  Future<void> addAll(List<Expense> list) async {
-    await _db.insertAll(list);
+  /// Saves [list] and returns the saved rows (with their database ids).
+  Future<List<Expense>> addAll(List<Expense> list) async {
+    final ids = await _db.insertAll(list);
     await refresh();
+    return [for (var i = 0; i < list.length; i++) list[i].copyWith(id: ids[i])];
   }
 
   Future<void> save(Expense e) async {
