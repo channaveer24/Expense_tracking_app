@@ -1,0 +1,61 @@
+name: Build Android APK
+
+# Builds an installable APK on every push and publishes it as a GitHub
+# pre-release, so you can download it straight onto your phone.
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+
+      - name: Install packages
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Unit tests (voice parser)
+        run: flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk ExpenseTracker-build${{ github.run_number }}.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExpenseTracker-apk
+          path: ExpenseTracker-build${{ github.run_number }}.apk
+
+      - name: Publish pre-release with the APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Expense Tracker build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          body: |
+            Install on Android: download the .apk below on your phone, open it and allow "Install unknown apps".
+            Branch: ${{ github.ref_name }} · Commit: ${{ github.sha }}
+          files: ExpenseTracker-build${{ github.run_number }}.apk
